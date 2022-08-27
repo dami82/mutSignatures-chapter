@@ -1,0 +1,469 @@
+---
+title: "Build a list of simulated VCF files (BLCA TCGA)"
+author: "Damiano Fantini"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: false
+    code_folding: hide
+params:
+  maf_url: "https://gdac.broadinstitute.org/runs/analyses__2016_01_28/reports/cancer/BRCA-TP/MutSigNozzleReport2CV/BRCA-TP.final_analysis_set.maf"
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, results = "asis", fig.align = "center", 
+                      fig.width = 8, fig.height = 5, comment = FALSE, 
+                      warning = FALSE, fig.keep = "last")
+
+library(dplyr)
+```
+
+
+## VCF Files and somatic mutation data
+
+There are several bioinformatic pipelines that allow the identification of 
+somatic mutations in human cancer samples (as well as in samples from 
+preclinical cancer models). For example, whole exome sequencing data can be 
+analyzed using samtools, bcftools 
+(<https://doi.org/10.1093/bioinformatics/btp352>), SnpEff 
+(<https://doi.org/10.4161/fly.19695>) or other bioinformatic pipelines.
+While several analytical options exists, most pipelines utilize the same 
+output format to store results: the **Variant Call Format (VCF)**.
+
+The latest specification of the VCF format is available at the following
+URL: <http://samtools.github.io/hts-specs/>. 
+
+Briefly, the VCF is a tab-separated text file format that contains 
+meta-information lines (lines starting with `##`), a header line 
+(single line starting with `#`), and then data lines which contain 
+information about genomic positions and the corresponding 
+genotype / DNA sequence information.
+
+There are 8 mandatory columns in a VCF file. These columns are: *1.* CHROM; 
+*2.* POS; *3.* ID; *4.* REF; *5.* ALT; *6.* QUAL *7.* FILTER *8.* INFO.
+
+-----
+
+## Goal of the analysis
+
+The goal of this vignette is to generate a list of synthetic VCF files 
+recapitulating the distribution of somatic mutations found in TCGA bladder 
+cancer samples (<https://gdac.broadinstitute.org/runs/analyses__2016_01_28/>).
+
+
+### Notes
+
+- The synthetic VCF files built here will be used to perform *mutational* 
+*signature analyses* via `mutSignatures`.
+
+- The input file used in this analysis is a Mutation Annotation Format (MAF) 
+file (tab-delimited text file with aggregated mutation information from 
+individual VCF Files) available at this URL: 
+<`r params$maf_url`>.
+
+- Data included in the MAF file were read-in and used to populate a list of 
+VCF files which had a custom pre-formatted set of meta-information.
+
+- The resulting VCF files are NOT expected to be identical to the original VCF 
+files collected by TCGA and available (under controlled access) at this 
+URL: <https://portal.gdc.cancer.gov/>.
+
+- The following fields were used from the MAF file to populate corresponding
+fields in the resulting VCF files:
+
+  + `Chromosome` >> `CHROM`
+  
+  + `Start_Position` >> `POS`
+  
+  + `Reference_Allele` >> `REF`
+  
+  + `Tumor_Seq_Allele2` >> `ALT`
+  
+  + `i_dbNSFP_CADD_phred` >>  `QUAL` 
+  
+  
+- VCF files were named after the first 15 characters of the `patient` field 
+and then `gz`-compressed.
+
+- All *seqnames* in the MAF file were modified to include the prefix 
+'chr' in order to match *seqnames* included in the 
+`BSgenome.Hsapiens.UCSC.hg19` object.
+
+-----
+
+
+## Implementation
+
+
+### Environment and custom functions
+
+We defined two custom functions (see below): 
+
+- `write_tcga_vcf()`: process the data imported from the MAF file and 
+generate simulated VCF files;
+
+- `fix_indels()`: fix formatting issues with InDels.
+
+
+```{r}
+# load libs
+#
+library(dplyr)
+
+# custom f(x)
+#
+
+# write_tcga_vcf
+write_tcga_vcf <- function(x, meta_li, sample_colname = 'sample', 
+                           min_n = 20, dest_dir = '.', gzip = TRUE) {
+  
+  # work with flds
+  cur_dir <- getwd()
+  if (!dir.exists(dest_dir))
+    try(dir.create(dest_dir))
+  
+  tryCatch({setwd(dest_dir)}, error = function(e) { 
+    stop('Could not change to destination directory')})
+  
+  x <- x[!is.na(x[, sample_colname]), ]
+  z <- split(x = x, f = x[, sample_colname])
+  
+  smpls <- names(z)
+  y <- list()
+  
+  for (si in smpls) {
+    
+    flnm <- paste0(gsub('[[:punct:]]', '_', si), '__simulated.vcf')
+    zi <- z[[si]]
+    zi <- zi[, -which(colnames(zi) == sample_colname)]
+    zi <- zi[as.numeric(order(zi$POS)), ]
+    zi <- zi[order(zi$POS), ]
+    zi <- zi[order(zi$CHROM), ]
+    rownames(zi) <- NULL
+    
+    try(unlink(x = flnm), silent = TRUE)
+    
+    if (nrow(zi) >=  min_n) {
+      
+      y[[length(y) + 1]] <- flnm
+      
+      # write meta lines 
+      for (li in meta_li) {
+        if (grepl('^##', x = li))
+          write(x = li, file = flnm, append = TRUE)
+      }
+      
+      # write header
+      hea <- paste0('#', paste(colnames(zi), collapse = '\t'))
+      write(x = hea, file = flnm, append = TRUE)
+      
+      # write data
+      write.table(x = zi, file = flnm, append = TRUE, quote = FALSE, 
+                  sep = '\t', row.names = FALSE, col.names = FALSE)
+      
+      if (gzip)
+        system(command = paste0('gzip ', flnm, ' '))
+    }
+  }
+  
+  y <- do.call(c, y)
+  
+  setwd(cur_dir)
+  return(y)
+} 
+
+# fix_indels
+fix_indels <- function(x){
+  
+  # in (ref): REF
+  # out (alt): ALT
+  y <- list()
+  keep <- nchar(x$REF) == 1
+  my_cols <- colnames(x)
+  
+  if (sum(keep) > 0)
+    y[[length(y) + 1]] <- x[keep, ]
+  
+  if (sum(!keep) > 0) {
+    xx <- x[!keep, ]
+    rownames(xx) <- NULL
+    
+    for (i in 1:nrow(xx)) {
+      tmp <- NULL
+      
+      if(xx$ALT[i] == '-'){
+        
+        # explode the deletion
+        tmp <- data.frame(
+          CHROM = xx$CHROM[i], 
+          POS = seq(xx$POS[i], (xx$POS[i] + nchar(xx$REF[i]) - 1), by = 1), 
+          ID = xx$ID[i], 
+          REF = strsplit(xx$REF[i], split = '')[[1]], 
+          ALT = xx$ALT[i], 
+          QUAL = xx$QUAL[i], 
+          FILTER = xx$FILTER[i], 
+          INFO = xx$INFO[i], 
+          stringsAsFactors = FALSE)
+        
+        for (ci in my_cols[!my_cols %in% colnames(tmp)]) {  
+          tmp[, ci] <- xx[i, ci] 
+        }
+        
+        y[[length(y) + 1]] <- tmp
+        
+      } else if (nchar(xx$ALT[i]) == nchar(xx$REF[i])) {
+        
+        # explode the mutation  
+        tmp <- data.frame(
+          CHROM = xx$CHROM[i], 
+          POS = seq(xx$POS[i], (xx$POS[i] + nchar(xx$REF[i]) - 1), by = 1), 
+          ID = xx$ID[i], 
+          REF = strsplit(xx$REF[i], split = '')[[1]], 
+          ALT = strsplit(xx$ALT[i], split = '')[[1]], 
+          QUAL = xx$QUAL[i], 
+          FILTER = xx$FILTER[i], 
+          INFO = xx$INFO[i], 
+          stringsAsFactors = FALSE)
+        
+        for (ci in my_cols[!my_cols %in% colnames(tmp)]) {  
+          tmp[, ci] <- xx[i, ci] 
+        }
+        
+        y[[length(y) + 1]] <- tmp
+      }
+    }
+  }
+  y  <- do.call(rbind, y)   
+  rownames(y) <- NULL
+  y <- y[order(as.numeric(y$POS)), ]
+  y <- y[order(y$CHROM), ]
+  
+  return(y)  
+}
+```
+
+
+
+### Perform Analysis
+
+The code required to perform this analysis is included below.
+
+
+```{r}
+# Input MAF
+#
+my_maf <- 'BRCA-TP.final_analysis_set.maf'
+
+# Download MAF file
+#
+download.file(url = params$maf_url, destfile = my_maf)
+
+# Read in and re-format data
+#
+x <- read.delim(my_maf, header = 1, as.is = TRUE)
+x <- x[, c('Chromosome', 'Start_Position', 'Reference_Allele', 
+           'Tumor_Seq_Allele2', 'patient', 'i_dbNSFP_CADD_phred')]
+
+x <- data.frame(
+  CHROM = paste0('chr', x$Chromosome),
+  POS = as.numeric(x$Start_Position),
+  ID = '.',
+  REF = x$Reference_Allele, 
+  ALT = x$Tumor_Seq_Allele2, 
+  QUAL = as.numeric(
+    sub('\\|[\\.0-9]+$', '', sub('^[\\.0-9]+\\|', '', x$i_dbNSFP_CADD_phred))), 
+  FILTER = '.', 
+  INFO= '.',
+  patient = substr(x$patient, 1, 15),
+  stringsAsFactors = FALSE)
+
+x <- x %>%
+  dplyr::filter(.$CHROM %in% paste0('chr', c(1:22, 'X', 'Y'))) %>%
+  dplyr::filter(.$ALT != .$REF, !is.na(.$POS)) %>%
+  dplyr::mutate(QUAL = ifelse(is.na(.$QUAL), '', .$QUAL)) %>%
+  fix_indels()
+
+# Declare meta-info lines (simulate a real VCF file)
+#
+meta_li <- list(
+  '##fileformat=VCFv4.2',
+  '##FILTER=<ID=PASS,Description="All filters passed">',
+  '##samtoolsVersion=1.2+htslib-1.2.1',
+  '##samtoolsCommand=samtools mpileup -f ../index/hg19.fa -v sample.bam', 
+  '##reference=file://../index/hg19.fa', 
+  '##contig=<ID=chr10,length=135534747>',
+  '##contig=<ID=chr11,length=135006516>',
+  '##contig=<ID=chr12,length=133851895>',
+  '##contig=<ID=chr13,length=115169878>',
+  '##contig=<ID=chr14,length=107349540>',
+  '##contig=<ID=chr15,length=102531392>',
+  '##contig=<ID=chr16,length=90354753>',
+  '##contig=<ID=chr17,length=81195210>',
+  '##contig=<ID=chr18,length=78077248>',
+  '##contig=<ID=chr19,length=59128983>',
+  '##contig=<ID=chr1,length=249250621>',
+  '##contig=<ID=chr2,length=243199373>',
+  '##contig=<ID=chr3,length=198022430>',
+  '##contig=<ID=chr4,length=191154276>',
+  '##contig=<ID=chr5,length=180915260>',
+  '##contig=<ID=chr6,length=171115067>',
+  '##contig=<ID=chr7,length=159138663>',
+  '##contig=<ID=chr8,length=146364022>',
+  '##contig=<ID=chr9,length=141213431>',
+  '##contig=<ID=chrX,length=155270560>',
+  '##contig=<ID=chrY,length=59373566>',
+  '##Here below you can find a few pretend VCF_file meta_lines.', 
+  '##Typically, meta ines are used to describe fields and values',
+  '##as well as lines recapitulate commands that', 
+  '##were executed to generate the final VCF file(s).',
+  '##An example is shown below:',
+  '##bcftools_callCommand=call -cv -Ov sample.vcf.gz')
+
+# Build simulated VCF files 
+#
+out_fld <- 'VCF/'
+try(unlink(out_fld, recursive = TRUE), silent = TRUE)
+my_vcf_files <- write_tcga_vcf(x = x, meta_li = meta_li, 
+                               sample_colname = 'patient', min_n = 50, 
+                               dest_dir = out_fld)
+
+# Clean
+#
+unlink(x = my_maf)
+```
+
+
+-----
+
+## Results
+
+```{r}
+# Define destination folders
+de_novo_fld <- '../03_method/VCF_de_novo/'
+deconv_fld <- '../03_method/VCF_deconv/'
+extra_fld <- '../03_method/VCF_extra/'
+
+# Delete if needed
+try(unlink(de_novo_fld, recursive = TRUE), silent = TRUE)
+try(unlink(deconv_fld, recursive = TRUE), silent = TRUE)
+try(unlink(extra_fld, recursive = TRUE), silent = TRUE)
+
+# generate folders
+try(dir.create(de_novo_fld), silent = TRUE)
+try(dir.create(deconv_fld), silent = TRUE)
+try(dir.create(extra_fld), silent = TRUE)
+
+# Move some VCF files to folder for de novo extraction
+#
+btch_01 <- c('A1-A0SI', 'A2-A0SY', 'A2-A0YK', 'A8-A07L', 'A8-A08H', 'A8-A0A6', 
+             'A8-A0A7', 'AC-A23H', 'AN-A0AT', 'AN-A0XW', 'AO-A03M', 'AO-A03O', 
+             'AO-A0J9', 'AQ-A04H', 'AR-A0U1', 'BH-A0AY', 'BH-A0DX', 'BH-A0DZ', 
+             'BH-A18J', 'BH-A5J0', 'C8-A1HM', 'D8-A1JA', 'D8-A1XK', 'D8-A1Y1', 
+             'E2-A15I', 'E2-A2P6', 'E9-A22G', 'EW-A1OV', 'OL-A66J', 'PE-A5DE')
+
+for (fi in btch_01) {
+  fii <- grep(gsub('[[:punct:]]', '_', fi), dir(out_fld), value = TRUE)
+  file.copy(from = paste0(out_fld, fii), 
+            to = paste0(de_novo_fld, fii), 
+            overwrite = TRUE)  
+}
+
+# Move some VCF files to folder for de-convolution
+#
+btch_02 <- c('A2-A0SW', 'A2-A0T5', 'A8-A084', '', 'A8-A092', 'A8-A093', 
+             'A8-A093', 'A8-A09Q', 'A8-A09Z', '', 'AC-A2QI', 'AC-A62X', 
+             'AN-A0AK', 'BH-A0W7', 'BH-A18G', 'BH-A1F6', 'BH-A209', 'C8-A26V', 
+             'C8-A26Y', 'C8-A3M7', 'D8-A1XJ', 'D8-A1XJ', 'D8-A1XZ', 'E2-A109', 
+             'E2-A1IN', 'E2-A1LG', 'EW-A1J5', 'GM-A2D9', 'GM-A2DO', 'LL-A5YL')
+
+
+btch_02 <- c('A1-A0SK', 'A2-A0T0', 'A2-A0T6', 'A2-A3XT', 'A7-A56D', 'A8-A07R', 
+             'A8-A09M', 'A8-A09Z', 'AC-A3W5', 'AC-A5EH', 'AC-A5XS', 'AN-A04C', 
+             'AO-A128', 'AO-A12E', 'AR-A2LE', 'BH-A0B6', 'BH-A0BL', 'BH-A0BZ', 
+             'BH-A0E6', 'BH-A0HA', 'BH-A0HF', 'BH-A0WA', 'BH-A18G', 'BH-A1FC', 
+             'C8-A12T', 'C8-A1HJ', 'C8-A26Y', 'D8-A1J8', 'D8-A1JD', 'D8-A1XQ')
+             
+#, 'D8-A27G', 'D8-A27M', 'E9-A1RF', 'EW-A1IZ', 'EW-A1J5', 'EW-A1P4', 'EW-A1PC', 'GI-A2C8')
+
+for (fi in btch_02) {
+  fii <- grep(gsub('[[:punct:]]', '_', fi), dir(out_fld), value = TRUE)
+  file.copy(from = paste0(out_fld, fii), 
+            to = paste0(deconv_fld, fii), 
+            overwrite = TRUE)  
+}
+
+# Extra
+fii <- grep('LL_A5YL', dir(out_fld), value = TRUE)
+fic <- file(paste0(out_fld, fii), open = 'r')
+y <- list()
+zz <- tryCatch({
+  while(1){
+    tli <- readLines(con = fic, n = 1)  
+    if(grepl('^chr', tli)) 
+      tli <- sub('^chr', '', tli)
+    y[[length(y) + 1]] <- tli
+  }
+}, error = function(e) { NULL }, finally = {close(fic)})
+writeLines(text = do.call(c, y), con = paste0(extra_fld, 'example_01.vcf'))
+
+
+
+```
+
+- We processed the TCGA BLCA MAF file and generated 
+**n=`r length(my_vcf_files)` simulated VCF files**. 
+
+- These files will be used for the mutational signature analysis:
+
+  + A number of n=30 VCF files will be used for *de novo* signature extraction
+  
+  + A number of n=30 VCF files will be used for signature deconvolution  
+
+
+-----
+-----
+
+## Appendix
+
+**Other Notes**
+
+- We only included samples where at least n=50 single-nucleotide locations 
+were mutated and/or deleted 
+
+- For the purpose of this analysis, all other VCF fields were left empty:
+
+  
+  + `ID` >> '.'
+  
+  + `FILTER` >> '.'
+
+  + `INFO` >> '.'
+  
+
+- The following lines were saved as meta information in all VCF files: 
+
+
+```{r results='asis'}
+for (li in meta_li) {
+  cat(paste0('|                 `', li, '`\n'))
+}
+```
+
+
+-----
+-----
+
+## SessionInfo
+
+```{r results='markup', comment='#'}
+# sessioninfo
+sessionInfo()
+```
+
+Success!  ||  [Damiano Fantini](mailto:damiano.fantini@gmail.com), Joshua Meeks & the Meeks' Lab (Northwestern University, Chicago, IL)  ||  `r format(Sys.Date(), '%b %d, %Y')`
+
+
+

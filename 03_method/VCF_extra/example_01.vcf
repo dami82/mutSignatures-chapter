@@ -1,0 +1,96 @@
+##fileformat=VCFv4.2
+##FILTER=<ID=PASS,Description="All filters passed">
+##samtoolsVersion=1.2+htslib-1.2.1
+##samtoolsCommand=samtools mpileup -f ../index/hg19.fa -v sample.bam
+##reference=file://../index/hg19.fa
+##contig=<ID=chr10,length=135534747>
+##contig=<ID=chr11,length=135006516>
+##contig=<ID=chr12,length=133851895>
+##contig=<ID=chr13,length=115169878>
+##contig=<ID=chr14,length=107349540>
+##contig=<ID=chr15,length=102531392>
+##contig=<ID=chr16,length=90354753>
+##contig=<ID=chr17,length=81195210>
+##contig=<ID=chr18,length=78077248>
+##contig=<ID=chr19,length=59128983>
+##contig=<ID=chr1,length=249250621>
+##contig=<ID=chr2,length=243199373>
+##contig=<ID=chr3,length=198022430>
+##contig=<ID=chr4,length=191154276>
+##contig=<ID=chr5,length=180915260>
+##contig=<ID=chr6,length=171115067>
+##contig=<ID=chr7,length=159138663>
+##contig=<ID=chr8,length=146364022>
+##contig=<ID=chr9,length=141213431>
+##contig=<ID=chrX,length=155270560>
+##contig=<ID=chrY,length=59373566>
+##Here below you can find a few pretend VCF_file meta_lines.
+##Typically, meta ines are used to describe fields and values
+##as well as lines recapitulate commands that
+##were executed to generate the final VCF file(s).
+##An example is shown below:
+##bcftools_callCommand=call -cv -Ov sample.vcf.gz
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO
+1	27057874	.	C	T	35	.	.
+1	66081710	.	C	T	20.4	.	.
+1	146756023	.	G	A	15.22	.	.
+1	152082173	.	C	G	14.05	.	.
+1	155237829	.	T	C	13.61	.	.
+1	179782251	.	G	A	33	.	.
+1	183486940	.	T	A	18.17	.	.
+1	220960522	.	G	A	14.76	.	.
+10	5683765	.	C	T	27.7	.	.
+10	78761245	.	C	T	12.27	.	.
+10	91066307	.	G	A		.	.
+10	103190166	.	G	A	17.63	.	.
+11	823557	.	C	T	17.53	.	.
+11	18955912	.	C	T		.	.
+11	44297153	.	C	T		.	.
+11	66204715	.	C	T		.	.
+11	77378341	.	C	G	12.87	.	.
+12	20806922	.	C	T		.	.
+12	21172248	.	G	A	13.97	.	.
+12	54932707	.	G	T	21	.	.
+12	56482607	.	C	T	24	.	.
+12	57499083	.	C	T		.	.
+12	81593142	.	G	A	29.9	.	.
+12	105611446	.	-	T		.	.
+12	108589947	.	G	A	15.84	.	.
+12	123741391	.	G	T	35	.	.
+13	39602423	.	C	T	34	.	.
+14	45673353	.	C	T	31	.	.
+16	1877749	.	C	T		.	.
+16	11868220	.	C	A	11.32	.	.
+16	18874988	.	C	A	20.8	.	.
+16	29937238	.	G	A		.	.
+16	30621185	.	C	T	29.5	.	.
+16	56921918	.	G	T	3.887	.	.
+17	5253832	.	C	T	39	.	.
+17	9615433	.	C	T		.	.
+17	16062148	.	C	T	18.82	.	.
+17	29684041	.	C	G	36	.	.
+19	13223538	.	C	A	18.84	.	.
+19	18967087	.	C	A	11.63	.	.
+19	36106161	.	C	G	3.679	.	.
+19	44038585	.	G	A	16.74	.	.
+2	135965355	.	G	A		.	.
+20	17475250	.	G	C	11.07	.	.
+20	17475259	.	G	C		.	.
+21	47538573	.	G	A	12.78	.	.
+22	37690715	.	G	A		.	.
+3	44763241	.	C	T	13.31	.	.
+3	123046605	.	G	A	23.2	.	.
+3	151046793	.	C	T		.	.
+3	186510310	.	G	T	16.83	.	.
+4	177032726	.	G	A	15.63	.	.
+5	37049264	.	C	T	27	.	.
+5	139193879	.	C	T	16.51	.	.
+5	160047653	.	G	T	2.457	.	.
+6	1610937	.	-	TA		.	.
+6	1610938	.	C	A		.	.
+6	7584585	.	G	A	25.5	.	.
+7	1526650	.	C	T	22.2	.	.
+8	12283473	.	C	T	0.01	.	.
+8	146156835	.	G	A		.	.
+9	100077163	.	G	T	8.832	.	.
+9	130575807	.	T	G	19.3	.	.
