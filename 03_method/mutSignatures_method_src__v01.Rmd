@@ -1,0 +1,807 @@
+---
+title: "Mutational Signature Analysis using mutSignatures"
+author: "Damiano Fantini"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: false
+params:
+  de_novo_input_folder: "VCF_de_novo/"
+  deconv_input_folder: "VCF_deconv/"
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, results = "asis", fig.align = "center", 
+                      fig.width = 8, fig.height = 5, comment = FALSE, 
+                      warning = FALSE, fig.keep = "last")
+
+# Load libs
+#
+library(mutSignatures)
+library(dplyr)
+library(ggplot2)
+library(BSgenome.Hsapiens.UCSC.hg19)
+library(kableExtra)
+
+# Set working dir
+#
+#setwd('~/mutSignatures_chapter/03_method/')
+```
+
+
+## The mutSignatures R pipeline
+
+One of the hallmarks of cancer is the accumulation of somatic mutations. 
+Processes including exposure to carcinogens, DNA damage and 
+inaccurate DNA repair may drive the formation of characteristic 
+non-random patterns of DNA mutations, which are also known as 
+**mutational signatures**.
+
+There are several bioinformatic pipelines that allow analysis of mutational 
+signatures. Here, we will use the 
+`mutSignatures` R library to perform such analysis. This library
+was described in a 
+[2020 Sci.Rep. paper](https://doi.org/10.1038%2Fs41598-020-75062-0) 
+and is available on *CRAN*, and on *GitHub* at the following URL:
+<https://github.com/dami82/mutSignatures>. You can install the latest version 
+(at this time, ver `2.1.5`) of the library in your R environment using 
+the `devtools` R package and executing the following line:
+
+```
+devtools::install_github("dami82/mutSignatures", force = TRUE, build_vignettes = TRUE)
+```
+
+Additional documentation to help getting started with the `mutSignatures` 
+R library is available online 
+([CRAN vignette](https://cran.r-project.org/web/packages/mutSignatures/vignettes/get_sarted_with_mutSignatures.html); 
+[Website](http://www.mutsignatures.org/); 
+[2020 Sci.Rep. Paper](https://doi.org/10.1038%2Fs41598-020-75062-0) and 
+[Supplementary Materials](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC7589488/bin/41598_2020_75062_MOESM1_ESM.pdf)).
+
+
+-----
+
+## Goal of the analysis
+
+The goal of this vignette is to describe all steps of a typical 
+mutational signatures analysis performed using `mutSignatures`. 
+A list of n=60 VCF files is used as input. These VCF files were generated
+using unrestricted publicly available TCGA Bladder Cancer 
+(BLCA) data ([input TCGA MAF available here](https://gdac.broadinstitute.org/runs/analyses__2016_01_28/reports/cancer/BRCA-TP/MutSigNozzleReport2CV/BRCA-TP.final_analysis_set.maf): this file was pre-processed, re-foprmatted, 
+and exploded into donor-specific VCF files). 
+
+The steps covered in the vignette include: 
+
+- Data import from bladder cancer VCF files and data pre-processing
+
+- Counting 3-nucleotide mutation types
+
+- *De novo* extraction of mutational signatures
+
+- Visualization and data export
+
+- Deconvolution of mutation data using previously identified mutational signatures
+
+-----
+
+## Notes
+
+- The input VCF files used in this analysis were generated as described here:
+[build_input_files_src__v01.html](https://github.com/dami82/mutSignatures).
+
+- A total of n=`r length(dir(params$de_novo_input_folder))` VCF files are used 
+for *de novo* signature extraction; also, a number of 
+n=`r length(dir(params$deconv_input_folder))` are used for deconvolution.
+
+
+-----
+
+### Acknowledgements
+
+Joshua J Meeks (<joshua.meeks@northwestern.edu>), xyz (<xyz@northwestern.edu >).
+JJM is supported by grant ABC.
+
+-----
+
+
+## Implementation
+
+### Data import from VCF files and data pre-processing
+
+Data import and pre-processing is the first phase of this analysis. 
+Often, mutation data are stored in a catalog of **Variant Call Format (VCF)** 
+files (for more info about the VCF specifications, 
+see <http://samtools.github.io/hts-specs/>). The VCF data parsing and 
+pre-processing involves 6 steps:  
+
+1- VCF file data are parsed via the `importVCFfiles()` function and used to return a large `data.frame`. 
+
+2- The `filterSNV()` function removes INDELS and non-SNV mutations from the `data.frame`. 
+
+3- Additional filtering (optional) can be performed by the user for example to remove variants with a low Phred score or to edit seqNames (*i.e.,* chromosome names) or sample identifiers as needed.
+
+4- Using the appropriate Reference `BSgenome` object, the `attachContext()` function retrieves the 3-nucleotide context at each SNV genomic position. 
+
+5- The `removeMismatchMut()` function applies a final filter where SNVs are removed if mismatches are detected between expected and observed (reference) DNA sequences  
+
+6- Mutation types (*mutTypes*) are then computed for each SNV following the standards proposed by the Sanger Institute (with pyrimidines as reference base) via the `attachMutType()` function.
+
+The code shown below illustrates how to execute all data import and pre-processing steps:
+
+```{r results='markup', comment='#'}
+# Load libs
+#
+library(mutSignatures)
+library(dplyr)
+library(ggplot2)
+library(BSgenome.Hsapiens.UCSC.hg19)
+library(kableExtra)
+
+## 1) Data Parsing from VCF files
+##
+
+# import mutation data from a list of VCF files
+vcf_ext <- 'vcf.gz'
+de_novo_fld <- 'VCF_de_novo/'
+my_vcfs <- grep(pattern = vcf_ext, dir(de_novo_fld), value = TRUE)
+my_vcfs <- paste0(de_novo_fld, my_vcfs)
+head(my_vcfs)
+# Read a list of VCF files via importVCFfiles()
+x <- importVCFfiles(vcfFiles = my_vcfs)
+
+# Check data.frame dims
+dim(x)
+## 2) Remove INDELS and non-SNV mutations
+##
+x <- filterSNV(dataSet = x,                     # input data.frame  
+               seq_colNames = c("REF", "ALT"))  # columns w/ sequence data
+
+# Check data.frame dims
+dim(x)
+## 3) Optional filtering & editing
+##
+
+# Optional: custom filtering (eg. minimum PHRED QUALITY of 10)
+# Optional: adjust SAMPLE identifiers
+# filtering performed via `dplyr`
+x <- x %>%
+  dplyr::filter(QUAL >= 10) %>%
+  mutate(SAMPLEID = sub('__simulated$', '', .$SAMPLEID)) %>%
+  mutate(SAMPLEID = gsub('[[:punct:]]', '-', toupper(.$SAMPLEID)))
+
+# Check data.frame dims
+dim(x)
+## 4) Attach 3-nt context
+##
+hg19 <- BSgenome.Hsapiens.UCSC.hg19::BSgenome.Hsapiens.UCSC.hg19
+x <- attachContext(mutData = x,                  # input data.frame
+                   BSGenomeDb = hg19,            # Reference Genome object
+                   chr_colName = 'CHROM',        # seqNames column
+                   start_colName = 'POS',        # genomic position column
+                   end_colName = 'POS',          # for VCF files, same as above
+                   nucl_contextN = 3,            # how large shall the context be
+                   context_colName = 'context')  # name of the column being added
+
+# Check data.frame dims
+dim(x)
+## 5) Remove mismatches (positions whose VCF reference does not match the 
+##    corresponding genome sequence)
+##
+x <- removeMismatchMut(mutData = x,                  # input data.frame
+                       refMut_colName = "REF",       # column name for ref base
+                       context_colName = "context",  # column name for context
+                       refMut_format = "N")          # reference format ('N')  
+
+# Check data.frame dims
+dim(x)
+## 6) Compute mutType (according to the standards proposed by the Sanger 
+##    Institute, i.e. with pyrimidines as reference base)
+##
+x <- attachMutType(mutData = x,                      # as above
+                   ref_colName = "REF",              # column name for ref base
+                   var_colName = "ALT",              # column name for mut base
+                   context_colName = "context")      # context colname 
+
+# Check data.frame dims
+dim(x)
+```
+
+```{r results='asis'}
+# Visualize head of the resulting data.frame
+x %>% 
+  head() %>% kable() %>% 
+  kable_styling(bootstrap_options = "striped", font_size = 7, full_width = FALSE)
+```
+
+-----
+
+
+
+### Counting 3-nucleotide mutation types
+
+Counting mutation types by samples is the last step of the pre-processing phase 
+and is performed using the `countMutTypes()` function.
+
+The input is a data.frame that includes at least two columns:
+
+- a column with info about samples (sample identifiers)
+
+- a column listing mutation types (*e.g.,* 3-nt mutTypes)
+
+The output is a `mutationCounts` object.
+
+
+```{r results='markup', comment='#'}
+## Counting 3-nucleotide mutation types
+##
+blca_counts <- countMutTypes(mutTable = x, 
+                             mutType_colName = 'mutType', 
+                             sample_colName = 'SAMPLEID')
+
+# Output
+blca_counts
+```
+
+-----
+
+
+### *De novo* extraction of mutational signatures
+
+A *de novo* extraction of mutational signatures implies performing non-negative matrix factorization (NMF) to identify patterns that can explain the pattern of somatic mutations observed in a set of cancer samples. The `mutSignatures` R library supports Brunet's algorithm for NMF (described in this [2004 PNAS paper](https://doi.org/10.1073/pnas.0308531101)) as well as an alternative NMF algorithm (for more info see our [2020 Sci Rep paper](https://doi.org/10.1038%2Fs41598-020-75062-0)).
+This step is performed via the `decipherMutationalProcesses()` function, which takes two inputs:
+
+- a `mutationCounts` object (like the object we instantiated earlier)
+
+- a `mutFrameworkParams` object, which defines the parameters for the analysis
+
+Completing this step may take several minutes, depending on the compute 
+resources (amount of memory and number of cores) and the complexity of the 
+problem (number of samples, number of signatures).
+
+```{r results='asis'}
+## De novo extraction of mutational signatures
+##
+
+# Define parameters for the non-negative matrix factorization procedure.
+blca_params <- setMutClusterParams( 
+    num_processesToExtract = 5,       # num signatures to extract
+    num_totIterations = 30,          # bootstrapping: usually 500-1000
+    num_parallelCores = 1,            # num of cores (parallelization)
+    seed = 12345)                     # random seed (optional) 
+
+# De Novo Extraction of Mutational Signatures (may take a while)
+blca_analysis <- decipherMutationalProcesses(input = blca_counts,
+                                             params = blca_params)
+```
+
+-----
+
+
+### Visualization and data export
+
+Results (and intermediates) of a *de novo* signature extraction job are returned 
+as elements of a `list` object. Specifically, there are two important elements 
+to inspect:
+
+- Mutational signatures: `[['Results']][['signatures']]` element 
+(`mutationSignatures` object).
+
+- Signature exposures (*i.e.* signature activities): 
+`[['Results']][['exposures']]` element (`mutSignExposures` object).
+
+Both objects can be used to build barplots via the `msigPlot()` or exported 
+to `data.frame` objects using the `mutSignatures::as.data.frame()` method.
+Also, `mutSignatures` comes with a function to compare newly-extracted 
+mutational signatures with other reference signatures, such as the
+COSMIC mutational signatures (see <https://cancer.sanger.ac.uk/signatures/>). To
+do so, the `matchSignatures()` computes the `cosine` distance 
+between signatures based on the 
+corresponding mutType frequencies and then returns pairwise similarity scores 
+where `similarity = 1 - distance`. Summary heatmaps are automatically built.
+
+
+
+**Mutational Signatures**
+
+The code below retrieves all n=5 mutational signatures (from the output of our
+*de novo* extraction job), and generates barplots to visualize them. Each bar 
+indicates the frequency (y-axis) of a certain mutation type (x-axis) in the 
+signature (values are winsorized at 0.2); 3-nt mutTypes are grouped and colored
+according to the corresponding SNV.  
+
+```{r results='asis', fig.width=14, fig.height=12}
+## Visualization and data export
+##
+
+# Get resulting Signatures
+de_novo_sigs <- blca_analysis$Results$signatures
+
+# Visualize individual signatures
+par(mfrow = c(5, 1))
+msigPlot(de_novo_sigs, signature = 1)
+msigPlot(de_novo_sigs, signature = 2)
+msigPlot(de_novo_sigs, signature = 3)
+msigPlot(de_novo_sigs, signature = 4)
+msigPlot(de_novo_sigs, signature = 5)
+```
+
+-----
+
+**Signature Exposures**
+
+
+The code below retrieves the signatures exposures / activities (from the output 
+of our *de novo* extraction job), and generates barplots to visualize those 
+results. Each bar corresponds to a sample (x-axis) and stacked colors indicate 
+the contribute of different signatures to the total number of mutations (y-axis) 
+in each sample.  
+
+```{r results='asis', fig.height=5, fig.width=7}
+# Exposures
+de_novo_expos <- blca_analysis$Results$exposures
+my_pal <- c('#66c2a5', '#fc8d62', '#8da0cb', '#e78ac3', '#a6d854')
+msigPlot(de_novo_expos) +
+  scale_fill_manual(values = my_pal)
+```
+
+-----
+
+
+**Compare Mutational Signatures**
+
+The code below retrieves COSMIC mutational signatures that were described as 
+important in bladder cancer (see <https://doi.org/10.1038/nature12477>) and 
+compares them to our *de novo*-extracted signatures. Results are visualized as
+a heatmap where x-axis indicates reference (COSMIC) signatures, y-axis indicates
+query (*de novo*) signatures, and box (red) intensity tracks with similarity 
+(computed as `1 - cosine distance`). The plot shows that 4 out of 5 signatures 
+identified in this analysis were highly similar to BLCA-specific COSMIC, 
+while one (featuring high frequency of T>G mutations) could NOT be matched
+to COSMIC 1/2/5/13.
+
+
+```{r results='asis', fig.height=4.5, fig.width=5.5}
+# Get COSMIC signatures (Sanger Institute) 
+cosmix <- getCosmicSignatures()
+
+# Subset COSMIC signatures that are prevalent in Bladder Cancer (literature)
+blca_cosmix <- cosmix[c(1,2,5,13)]
+
+# Compare signatures
+blca_new_vs_cosmix <- matchSignatures(de_novo_sigs, blca_cosmix)
+
+# Show heatmap
+blca_new_vs_cosmix$plot
+```
+
+
+-----
+
+
+**Object Management and data export**
+
+The library comes with several methods to manage and work with 
+`mutationSignatures` objects (as well as objects of other classes). 
+Examples include the `[`, `setSignatureNames`, `getSignatureIdentifiers` and 
+`as.data.frame` methods. SOme examples are shown below. 
+
+```{r results='markup'}
+# Reorder or subset signatures in a mutSignatures object
+de_novo_sigs <- de_novo_sigs[c(3, 4, 5, 2, 1)]
+
+# Rename signatures via setSignatureNames()
+de_novo_sigs <- setSignatureNames(de_novo_sigs, paste0('neoBLCA_', LETTERS[1:5]))
+
+# Get / show Signature Names
+getSignatureIdentifiers(de_novo_sigs)
+```
+```{r results='asis'}
+# Export to data.frame
+de_novo_sigs_df <- mutSignatures::as.data.frame(de_novo_sigs)
+
+# Show head
+de_novo_sigs_df %>% 
+  head(12) %>% kable() %>% 
+  kable_styling(bootstrap_options = "striped", font_size = 8, full_width = FALSE)
+```
+
+-----
+
+
+### Deconvolution of mutation data using previously identified mutational signatures
+
+The `mutSignatures` library is a flexible framework and supports deconvolution 
+of mutation data using pre-defined mutational signatures (*e.g.,* COSMIC 
+signatures, signatures that were identified before or by other groups). 
+In this case, the pre-processing phase is virtually unchanged, but the NMF 
+step is replaced by a fast combinatorial non-negative least-square
+algorithm. This step is performed via the `resolveMutSignatures()` function. 
+Results only include signature exposures (activities). 
+
+The code below shows how to streamline all pre-processing steps 
+(using `dplyr` pipes) and then execute the `resolveMutSignatures()` function.
+Results are retrieved and used to generate a barplot summarizing signature 
+exposures.
+
+
+```{r results='asis'}
+## Read VCF files in
+##
+vcf_ext <- 'vcf.gz'
+deconv_fld <- 'VCF_deconv/'
+my_vcfs <- grep(pattern = vcf_ext, dir(deconv_fld), value = TRUE)
+my_vcfs <- paste0(deconv_fld, my_vcfs)
+
+## Pre-processing + Counting (same as above) via dplyr pipes
+##
+blca_deco_counts <- mutSignatures::importVCFfiles(vcfFiles = my_vcfs) %>%
+  
+  dplyr::filter(QUAL >= 10) %>%
+  mutate(SAMPLEID = sub('__simulated$', '', .$SAMPLEID)) %>%
+  mutate(SAMPLEID = gsub('[[:punct:]]', '-', toupper(.$SAMPLEID))) %>%
+  
+  filterSNV(seq_colNames = c("REF", "ALT")) %>%
+  
+  attachContext(BSGenomeDb = BSgenome.Hsapiens.UCSC.hg19, 
+                chr_colName = 'CHROM', start_colName = 'POS', 
+                end_colName = 'POS', nucl_contextN = 3, 
+                context_colName = 'context') %>%
+  
+  removeMismatchMut(refMut_colName = "REF", context_colName = "context",  
+                    refMut_format = "N")    %>%
+  
+  attachMutType(ref_colName = "REF", var_colName = "ALT",              
+                context_colName = "context") %>%
+  
+  countMutTypes(mutType_colName = 'mutType', sample_colName = 'SAMPLEID')
+
+## Deconvolute using resolveMutSignatures()
+##
+blca_deco_analysis <- resolveMutSignatures(mutCountData = blca_deco_counts,
+                                           signFreqData = de_novo_sigs,
+                                           byFreq = TRUE)
+
+## Fetch Results, Visualize Exposures
+##
+
+# Get results
+blca_deco_expos <- blca_deco_analysis$Results$count.result
+
+# Plot
+my_pal <- c('#66c2a5', '#fc8d62', '#8da0cb', '#e78ac3', '#a6d854')
+msigPlot(blca_deco_expos) + scale_fill_manual(values = my_pal)
+```
+
+
+Similar to what shown above, `mutSignExposures` objects can be
+exported to `data.frame` using the `as.data.frame` method.
+
+```{r}
+## Export as data.frame
+##
+blca_deco_expos_df <- mutSignatures::as.data.frame(blca_deco_expos, 
+                                                   transpose = TRUE)
+
+# Show head
+blca_deco_expos_df %>% 
+  head(n = 12) %>% kable() %>% 
+  kable_styling(bootstrap_options = "striped", font_size = 8, full_width = FALSE)
+```
+
+Notably, the output returned by `resolveMutSignatures()` includes two 
+`mutSignExposures` objects:
+
+- Total Mutation Counts by Signature in each sample: 
+`[['Results']][['count.result']]` element (`mutSignExposures` object).
+
+- Relative proportion of Signature activities (frequency) in each 
+sample (sums up to unity): 
+`[['Results']][['freq.result']]` element (`mutSignExposures` object).
+
+Both results can be exported as `data.frame` and used in downstream analyses.
+For example, here we fetch both objects, transform them in molten data.frames, 
+bind them together, and use the resulting object to build a stacked 
+signature exposure barplot (top panel, total counts by signature; bottom panel, 
+proporion of counts by signature).
+
+
+```{r}
+## Downstream analyses and Advanced Visualization
+##
+
+# Export count version as well as freq.version as data.frames
+blca_xp_cnt <- blca_deco_analysis$Results$count.result
+blca_xp_cnt_df <- mutSignatures::as.data.frame(blca_xp_cnt, transpose = TRUE)
+
+blca_xp_frq <- blca_deco_analysis$Results$freq.result
+blca_xp_frq_df <- mutSignatures::as.data.frame(blca_xp_frq, transpose = TRUE)
+
+# Transform TOT_counts exposure data.frame
+tmp_df1 <- as.matrix(blca_xp_cnt_df) %>%
+  reshape2:::melt.matrix(varnames = c('ID', 'Sign')) %>%
+  mutate(panel = 'Abs Mut Counts')
+
+# Transform FREQ exposure data.frame
+tmp_df2 <- as.matrix(blca_xp_frq_df) %>%
+  reshape2:::melt.matrix(varnames = c('ID', 'Sign')) %>%
+  mutate(panel = 'Frequency')
+
+# define sample order
+sample_ord <- apply(blca_xp_cnt_df, 1, sum) %>% 
+  sort(decreasing = TRUE) %>% names()
+
+# Bind together
+tmp <- rbind(tmp_df1, tmp_df2)  %>%
+  mutate(ID = factor(.$ID, levels = sample_ord))
+
+# Build barplot  
+ggplot(tmp, aes(x = ID, y = value, fill = Sign)) +
+  geom_bar(stat = 'identity', position = position_stack()) +
+  theme_bw() +
+  facet_grid(rows = vars(panel), scales = 'free', space = 'fixed') +
+  ylab('Mutations') + xlab('') +
+  scale_fill_manual('Signatures', values = my_pal) +
+  theme(axis.text.x = element_text(angle = 60, size = 7, hjust = 1, vjust = 1), 
+        legend.position = 'top')
+```
+
+-----
+
+
+## Additional Considerations
+
+Below, we included a list of comments and notes about specific steps of the 
+analyses presented in this vignette. Attention should be paid to the following 
+items as they are very important for a succesfull implementation of the
+pipeline and interpretation of the results.
+
+
+1- **Minimum number of input samples**. This pipeline requires more than one
+sample to perform *de novo* extraction of mutational signatures. Moreover, we 
+do NOT recommend attempting signature extraction from very small numbers
+of samples. Conversely, it is possible to deconvolute a single sample against 
+COSMIC or previously extracted mutational signatures via the 
+`resolveMutSignatures()` function.
+
+
+```{r results='markup', eval=FALSE}
+ex01 <- resolveMutSignatures(mutCountData = blca_counts[1], 
+                             signFreqData = blca_cosmix)
+
+ex01$Results$count.result
+#>  MutSignature Exposures object - mutSignatures
+#> 
+#>  Total num of Samples: 1
+#>  Total num of Signatures: 4  { first 4 signatures are displayed }
+#>  Signature names:  COSMIC.1, COSMIC.2, COSMIC.5, COSMIC.13
+#> 
+#>     Sign.1   Sign.2   Sign.3   Sign.4
+#>     ------   ------   ------   ------
+#>   +     10       17        3       70  +  TCGA-A1-A0SI-01
+#> 
+```
+
+
+2- **Filtering mutations**. This pipeline is meant to analyze 
+somatic mutations, and hence it is very important to 
+filter out single nucleotide polymorphisms as 
+well as other variants (*e.g.*, germline mutations or 
+technical artifacts). Filtering should be performed at the VCF stage or during 
+pre-processing. Filtering approaches may include: *i)* excluding variants 
+detected in a non-cancer sample from the same donor; *ii)* removing 
+well-documented single nucleotide polymorphisms (for example, 
+see <https://www.ncbi.nlm.nih.gov/snp/>); *iii)* excluding low-confidence 
+mutations (*e.g.,* filter based on PHRED scores as shown above, or on 
+variant allele frequency).  
+
+
+3- **Filtering samples**. We recommend excluding samples
+with very low mutation burden from any mutational signature extraction or 
+deconvolution job, since results may be inaccurate for these samples.
+We typically exclude samples with a total number of SNVs smaller than 15-30 
+(depending on the dataset). For example, in the analysis above, the sample with 
+the smallest number of SNVs had n=17 SNVs.
+
+```{r results='markup', eval=FALSE}
+ex02 <- mutSignatures::as.data.frame(blca_counts) %>%
+  t() %>% apply(MARGIN = 1, FUN = sum) %>% min()
+
+ex02
+#> [1] 17
+```
+
+
+4- **Assure consistency between VCF files and the BSGenome object**. Make sure 
+that the same reference genome was used for read mapping as well as for 
+the mutational signature analysis. In other words, it is not possible to 
+run this pipeline using a human `hg19` reference if reads 
+were mapped to human `hg38` or vice versa. 
+If unsure about how the VCF files were generated, 
+you may want to look at the VCF meta-information 
+lines (these may include info about the reference genome and/or 
+the lengths of chromosome sequences used for read mapping and 
+variant calling). Based on that information, identify the most appropriate
+annotation library 
+(see <https://bioconductor.org/packages/release/data/annotation/>) 
+to use in the analysis.
+
+5- **Assure consistency of sequence names**. 
+Even if VCF files and the BSGenome object were built using compatible 
+genome references (*e.g.,* human `hg19`), it is possible that sequence names 
+in the VCF files (*i.e.,* values in the `CHROM` column; 
+for example `1`, `2`, `3`, ...) 
+do NOT match the corresponding values stored in the `BSGenome` object 
+(TYPICALLY, `chr1`, `chr2`, `chr3`, ...). Before running a signature 
+analysis, please assure consistency of seqnames as shown below.
+
+```{r comment='#', results='markup', eval=FALSE}
+## Read VCF file
+ex03 <- mutSignatures::importVCFfiles(vcfFiles = 'VCF_extra/example_01.vcf')
+head(ex03)
+#>   CHROM       POS ID REF ALT  QUAL FILTER INFO   SAMPLEID
+#> 1     1  27057874  .   C   T 35.00      .    . example_01
+#> 2     1  66081710  .   C   T 20.40      .    . example_01
+#> 3     1 146756023  .   G   A 15.22      .    . example_01
+#> 4     1 152082173  .   C   G 14.05      .    . example_01
+#> 5     1 155237829  .   T   C 13.61      .    . example_01
+#> 6     1 179782251  .   G   A 33.00      .    . example_01
+
+## Access BSGenome seqnames
+hg19 <- BSgenome.Hsapiens.UCSC.hg19
+head(GenomeInfoDb::seqnames(hg19))
+#> [1] "chr1" "chr2" "chr3" "chr4" "chr5" "chr6"
+
+## Compare seqNames
+sum(ex03$CHROM %in% seqnames(BSgenome.Hsapiens.UCSC.hg19)) / nrow(ex03)
+#> 0
+
+## Modify
+ex03 <- ex03 %>%
+  mutate(CHROM = paste0('chr', .$CHROM))
+
+head(ex03)
+#>   CHROM       POS ID REF ALT  QUAL FILTER INFO   SAMPLEID
+#> 1  chr1  27057874  .   C   T 35.00      .    . example_01
+#> 2  chr1  66081710  .   C   T 20.40      .    . example_01
+#> 3  chr1 146756023  .   G   A 15.22      .    . example_01
+#> 4  chr1 152082173  .   C   G 14.05      .    . example_01
+#> 5  chr1 155237829  .   T   C 13.61      .    . example_01
+#> 6  chr1 179782251  .   G   A 33.00      .    . example_01
+
+sum(ex03$CHROM %in% seqnames(BSgenome.Hsapiens.UCSC.hg19)) / nrow(ex03)
+#> 1
+```
+
+5- **Selecting the best number of signatures to extract**. Unfortunately, it is 
+not always easy to select the best number of signatures to extract in a 
+*de novo* signature analysis. The most appropriate number should be selected
+based on the size of the dataset, the extent of inter-sample heterogeneity, 
+preliminary information about similar cancer 
+types (see <https://doi.org/10.1038/nature12477>), trial an 
+error, evaluation of the mutational signature patterns 
+(how similar / different are the profiles of *de novo*-extracted 
+mutational signatures?), and stability results (silhouette plots). 
+The `mutSignatures` library also 
+provides a function to perform a preliminary assessment of the deconvolution
+error (% of max error on the training set) 
+with respect to the number of signatures being extracted. This function
+may provide some insights into the optimal range of signature numbers 
+to extract.
+
+
+```{r results='asis', fig.width=5, fig.height=4.5, message=FALSE}
+# prelimProcessAssess (this may take a while)
+ex04 <- prelimProcessAssess(input = blca_counts, maxProcess = 10, plot = FALSE)
+
+# Build a plot
+ggplot(ex04, aes(x=numProcess, y=percentErr)) +
+  geom_point() + geom_line() +
+  scale_x_continuous(breaks = seq(1, 12, by = 1)) +
+  theme_bw() + xlab('number of signatures') + ylab('% Error')
+```
+
+6- **Selecting the right number of bootstrap iterations**. 
+Bootstrapping is an important step in the *de novo* signature extraction 
+procedure, and contributes to assessing the stability of mutational signatures.
+The number of bootstrap iterations affects both algorithm runtime as well as 
+signature robustness. Users can set the total number of bootstrap iterations via 
+the `num_totIterations` argument (`setMutClusterParams()` function). 
+As a rule of thumb, we have used 50-100 iterations for quick testing
+and 250-1000 iterations for production.
+
+
+7- **Selecting the right set of signatures for a deconvolution analysis**. 
+It is highly recommended to select relevant mutational signatures before
+performing a mutational signature deconvolution analysis. 
+In other words, we discourage
+deconvoluting a catalog of mutations against the full set of n=30 COSMIC 
+signatures, since this may identify signatures that
+are NOT really active in that cancer type. Looking for published results 
+from the same cancer type
+(for example, see <https://doi.org/10.1038/nature12477>) and/or running 
+a *de novo* signature 
+extraction analysis may help to identify relevant signatures for a new dataset.
+
+
+```{r eval=FALSE, results='markup'}
+# Deconvolute BLCA via 
+ex05 <- resolveMutSignatures(mutCountData = blca_deco_counts,
+                             signFreqData = cosmix, byFreq = TRUE)
+
+# Get signatures exposures (activities)
+ex05_cnt <- ex05$Results$count.result
+
+# Prevalent signatures by counts 
+# Expected: COSMIC-1/2/5/13
+# False negative: COSMIC-5 not identified!! 
+# False positive: COSMIC-6 and COSMIC-3 were identified! 
+mutSignatures::as.data.frame(ex05_cnt) %>%
+  apply(MARGIN = 1, FUN = sum) %>% sort(decreasing = TRUE) %>%
+  head()
+#>  COSMIC.6 COSMIC.13  COSMIC.3  COSMIC.2  COSMIC.1 COSMIC.20 
+#>  963.4687  868.1936  665.6782  580.4145  425.7910  340.2650 
+```
+
+
+8- **Parallelization**. Parallelization is supported on multi-core 
+Linux and Unix environments (the feature was never tested on 
+Windows machines). Parallelization 
+can considerably speed up execution times of a *de novo* mutational signature 
+extraction job (as long as the system has enough memory). To enable 
+parallelization, it is sufficient to set the `num_parallelCores` argument 
+(`setMutClusterParams()` function) to a value of 2 or higher.
+
+
+9- **Working with non-standard mutation types**. All analyses presented
+in this vignette used 3-nucleotide mutation types formatted according 
+to the convention proposed by the Sanger Institute (*e.g.,* `A[C>A]G`).
+However, the `mutSignatures` library is mutation-type-agnostinc. Users can 
+define custom mutation types (*e.g.,* `C[G>T]T`, `GA[C>A]G` or `RR[Y>R]R`), 
+count them using `countMutTypes()` and then analyze them using 
+`decipherMutationalProcesses()` and `resolveMutSignatures()`. For more info, 
+see our [2020 Sci.Rep. paper](https://doi.org/10.1038/s41598-020-75062-0) 
+(figure 4).
+
+
+-----
+
+## Conclusions 
+
+- We performed mutational signature analysis using a 
+list of bladder cancer VCF files as input. 
+
+  + A number of n=30 VCF files was used for *de novo* signature extraction.
+  
+  + A number of n=30 VCF files was used for signature deconvolution  (activity attribution).
+  
+- We described pre-processing steps to import data from VCF files, perform
+filtering, retrieve 3-nucleotide genomic context, compile and count 
+mutation types.
+
+  + We also showed how to execute all these steps back-to-back via
+  `dplyr` piping.
+  
+- We compared *de novo*-extracted mutational signatures to COSMIC signatures, 
+exported results as `data.frame` and generated plots.
+
+- Finally, we further discussed about additional 
+points that should be kept in mind while designing and 
+performing mutational signature analysis.
+
+-----
+-----
+
+## SessionInfo
+
+```{r results='markup', comment='#'}
+# sessioninfo
+sessionInfo()
+```
+
+Success!  ||  [Damiano Fantini](mailto:damiano.fantini@gmail.com), Joshua Meeks & the Meeks' Lab (Northwestern University, Chicago, IL)  ||  `r format(Sys.Date(), '%b %d, %Y')`
+
+
+

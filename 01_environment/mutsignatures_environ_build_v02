@@ -1,0 +1,61 @@
+#
+# Started an Ubuntu 20.04 instance w/ 15Gb disk
+#
+
+# install libs via aptitude (including R and some perl libs)
+#
+sudo apt-get update -y
+sudo apt install -y build-essential libcurl4-openssl-dev
+sudo apt install -y default-jre python3-pip gdebi-core qpdf
+sudo apt-get install -y libgd-perl libgd-dev libgd-graph-perl
+sudo apt-get install -y libharfbuzz-dev libfribidi-dev pandoc
+sudo apt-get install -y libssl-dev libfontconfig1-dev libxml2-dev
+sudo apt-get install -y libfreetype6-dev libpng-dev libtiff5-dev libjpeg-dev
+
+# Install R
+#
+sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys E298A3A825C0D65DFD57CBB651716619E084DAB9
+sudo add-apt-repository 'deb https://cloud.r-project.org/bin/linux/ubuntu focal-cran40/'
+sudo apt install -y r-base
+
+# Make sure R installation was successful & check R version
+#
+R --version
+## R version 4.2.1 (2022-06-23) -- "Funny-Looking Kid"
+
+# Install R libraries
+#
+sudo su - -c "R -e \"install.packages(c('dplyr', 'ggplot2', 'reshape2'), repos='https://cran.rstudio.com/')\""
+sudo su - -c "R -e \"install.packages(c('httr', 'devtools', 'markdown', 'rmarkdown', 'knitr'), repos='https://cran.rstudio.com/')\""
+sudo su - -c "R -e \"install.packages(c('BiocManager', 'foreach', 'cluster', 'doParallel'), repos='https://cran.rstudio.com/')\""
+sudo su - -c "R -e \"install.packages(c('pracma', 'proxy', 'kableExtra', 'gridExtra'), repos='https://cran.rstudio.com/')\""
+sudo su - -c "R -e \"BiocManager::install(c('BSgenome.Hsapiens.UCSC.hg19', 'BSgenome.Mmusculus.UCSC.mm10'))\""
+
+# Install mutSignatures
+#
+sudo su - -c "R -e \"devtools::install_github('dami82/mutSignatures', force = TRUE, build_vignettes = TRUE)\""
+
+# Install Rstudio server (Version:  2022.07.1+554| Released:  2022-07-25)
+# <https://www.rstudio.com/products/rstudio/download-server/debian-ubuntu/>
+#
+wget https://download2.rstudio.org/server/bionic/amd64/rstudio-server-2022.07.1-554-amd64.deb
+sudo gdebi rstudio-server-2022.07.1-554-amd64.deb
+sudo rm rstudio-server-2022.07.1-554-amd64.deb
+
+# File & Envir Management
+#
+sudo adduser rstudio
+## pwd: rstudio
+
+sudo chmod 777 -R /usr/local/lib/R/site-library
+sudo chmod 777 -R /usr/lib/R/site-library
+sudo chmod 777 -R /usr/lib/R/library
+
+# ---
+# Make sure your firewall rules allow access on port 8787 
+# Acess RStudio server via a web browser:
+# my.serv.ip.addrs:8787
+# Username: rstudio 
+# Password: rstudio
+# 
+
